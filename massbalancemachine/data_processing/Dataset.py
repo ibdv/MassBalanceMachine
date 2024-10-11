@@ -62,7 +62,8 @@ class Dataset:
                              *,
                              climate_data: str,
                              geopotential_data: str,
-                             change_units: bool = False) -> None:
+                             change_units: bool = False,
+                             era5: bool = True) -> None:
         """
         Fetches all the climate data, for a list of variables of interest, for the specified RGI IDs.
 
@@ -73,7 +74,7 @@ class Dataset:
         """
         output_fname = self._get_output_filename("climate_features")
         self.data = get_climate_features(
-            self.data, output_fname, climate_data, geopotential_data, change_units
+            self.data, output_fname, climate_data, geopotential_data, change_units, era5
         )
 
     def convert_to_monthly(

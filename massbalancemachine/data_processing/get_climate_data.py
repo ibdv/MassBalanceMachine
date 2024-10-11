@@ -17,6 +17,7 @@ from calendar import month_abbr
 import xarray as xr
 import numpy as np
 import pandas as pd
+import xoak
 
 
 def get_climate_features(
@@ -25,6 +26,7 @@ def get_climate_features(
     climate_data: str,
     geopotential_data: str,
     change_units: bool,
+    era5: bool,
 ) -> pd.DataFrame:
     """
     Takes as input ERA5-Land monthly averaged climate data (pre-downloaded), and matches this with the locations
@@ -48,36 +50,43 @@ def get_climate_features(
     # Load the two climate datasets
     ds_climate, ds_geopotential = _load_datasets(climate_data,
                                                  geopotential_data)
+    if era5 != True:
+        # Make sure longitudes are from -180 to 180
+        ds_climate.longitude.values=(((ds_climate.longitude.values + 180) % 360) - 180)
+        ds_geopotential.longitude.values=(((ds_geopotential.longitude.values + 180) % 360) - 180)
 
     # Makes things easier down the line
     # Change temperature to Celsius and precipitation to m.w.e
     if change_units:
         ds_climate["t2m"] = ds_climate["t2m"] - 273.15
 
-    # Get latitudes and longitudes from the climate dataset.
-    lat, lon = ds_climate.latitude, ds_climate.longitude
+    if era5:
+         # Reduce expver dimension
+        ds_climate = ds_climate.reduce(np.nansum, "expver")
 
-    # Convert the longitudes
-    ds_180 = _adjust_longitude(ds_geopotential)
+        # Get latitudes and longitudes from the climate dataset.
+        lat, lon = ds_climate.latitude, ds_climate.longitude
 
-    # Crop the geopotential height to the region of interest
-    ds_geopotential_cropped = _crop_geopotential(ds_180, lat, lon)
+        # Convert the longitudes 
+        ds_180 = _adjust_longitude(ds_geopotential)
 
-    # Calculate the geopotential height in meters
+        # Crop the geopotential height to the region of interest
+        ds_geopotential_cropped = _crop_geopotential(ds_180, lat, lon)
+    else: # carra data is already cropped 
+        ds_geopotential_cropped = ds_geopotential
+
+    # Calculate the geopotential height in meters 
     ds_geopotential_metric = _calculate_geopotential_height(ds_geopotential_cropped)
-
-    # Reduce expver dimension
-    ds_climate = ds_climate.reduce(np.nansum, "expver")
 
     # Create a date range for one hydrological year
     df = _add_date_range(df)
 
     # Get the climate data for the latitudes and longitudes and date ranges as
     # specified
-    climate_df = _process_climate_data(ds_climate, df)
+    climate_df = _process_climate_data(ds_climate, df, era5)
     # Get the geopotential height for the latitudes and longitudes as specified,
     # for the locations of the stake measurements.
-    altitude_df = _process_altitude_data(ds_geopotential_metric, df)
+    altitude_df = _process_altitude_data(ds_geopotential_metric, df, era5)
 
     # Combine the climate data with the altitude climate data
     df = _combine_dataframes(df, climate_df, altitude_df)
@@ -148,7 +157,7 @@ def _add_date_range(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _process_climate_data(ds_climate: xr.Dataset, df: pd.DataFrame) -> pd.DataFrame:
+def _process_climate_data(ds_climate: xr.Dataset, df: pd.DataFrame, era5) -> pd.DataFrame:
     """Process climate data for all points and times."""
 
     # Create DataArrays for latitude and longitude
@@ -159,12 +168,19 @@ def _process_climate_data(ds_climate: xr.Dataset, df: pd.DataFrame) -> pd.DataFr
     date_array = np.array([r.values for r in df["range_date"].values])
     time_da = xr.DataArray(date_array, dims=["points", "time"])
 
-    climate_data_points = ds_climate.sel(
-        latitude=lat_da,
-        longitude=lon_da,
-        time=time_da,
-        method="nearest",
-    )
+    if era5:
+        climate_data_points = ds_climate.sel(
+            latitude=lat_da,
+            longitude=lon_da,
+            time=time_da,
+            method="nearest",
+        )
+    else: # if data is on equal area projection (lat/lon are not dimensions) (CARRA)
+        ds_climate.xoak.set_index(['latitude', 'longitude'], 'sklearn_geo_balltree')
+        ds_selection = ds_climate.xoak.sel(
+            latitude=lat_da,
+            longitude=lon_da)
+        climate_data_points = ds_selection.sel(valid_time=time_da,method="nearest")
 
     # Create a dataframe from the DataArray
     climate_df = (
@@ -174,7 +190,10 @@ def _process_climate_data(ds_climate: xr.Dataset, df: pd.DataFrame) -> pd.DataFr
     )
 
     # Drop columns
-    climate_df = climate_df.drop(columns=["points", "time"])
+    if era5: 
+        climate_df = climate_df.drop(columns=["points", "time"])
+    else:
+        climate_df = climate_df.drop(columns=["points", "valid_time", "time"])
 
     # Get the number of rows and columns
     num_rows, num_cols = climate_df.shape
@@ -193,20 +212,24 @@ def _process_climate_data(ds_climate: xr.Dataset, df: pd.DataFrame) -> pd.DataFr
     return result_df
 
 
-def _process_altitude_data(
-    ds_geopotential: xr.Dataset, df: pd.DataFrame
-) -> pd.DataFrame:
+def _process_altitude_data(ds_geopotential: xr.Dataset, df: pd.DataFrame, era5) -> pd.DataFrame:
     """Process altitude data for all points."""
 
     # 1. Create DataArrays for latitude and longitude
     lat_da = xr.DataArray(df["POINT_LAT"].values, dims="points")
     lon_da = xr.DataArray(df["POINT_LON"].values, dims="points")
 
-    altitude_data_points = ds_geopotential.sel(
-        latitude=lat_da,
-        longitude=lon_da,
-        method="nearest",
-    )
+    if era5:
+        altitude_data_points = ds_geopotential.sel(
+                latitude=lat_da,
+                longitude=lon_da,
+                method="nearest",
+            )
+    else: # if data is on equal area projection (lat/lon are not dimensions)
+        ds_geopotential.xoak.set_index(['latitude', 'longitude'], 'sklearn_geo_balltree')
+        altitude_data_points = ds_geopotential.xoak.sel(
+            latitude=lat_da,
+            longitude=lon_da)
 
     return altitude_data_points.to_dataframe()
 
