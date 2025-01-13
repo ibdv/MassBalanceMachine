@@ -50,6 +50,7 @@ def get_climate_features(
     # Load the two climate datasets
     ds_climate, ds_geopotential = _load_datasets(climate_data,
                                                  geopotential_data)
+
     if era5 != True:
         # Make sure longitudes are from -180 to 180
         ds_climate.longitude.values=(((ds_climate.longitude.values + 180) % 360) - 180)
@@ -62,7 +63,10 @@ def get_climate_features(
 
     if era5:
          # Reduce expver dimension
-        ds_climate = ds_climate.reduce(np.nansum, "expver")
+        try:
+            ds_climate = ds_climate.reduce(np.nansum, "expver")
+        except: 
+            print("expver dimension not even in file")
 
         # Get latitudes and longitudes from the climate dataset.
         lat, lon = ds_climate.latitude, ds_climate.longitude
@@ -169,12 +173,20 @@ def _process_climate_data(ds_climate: xr.Dataset, df: pd.DataFrame, era5) -> pd.
     time_da = xr.DataArray(date_array, dims=["points", "time"])
 
     if era5:
-        climate_data_points = ds_climate.sel(
-            latitude=lat_da,
-            longitude=lon_da,
-            time=time_da,
-            method="nearest",
-        )
+        try:
+            climate_data_points = ds_climate.sel(
+                latitude=lat_da,
+                longitude=lon_da,
+                time=time_da,                     
+                method="nearest",
+            )
+        except: 
+            climate_data_points = ds_climate.sel(
+                latitude=lat_da,
+                longitude=lon_da,
+                valid_time=time_da,                     
+                method="nearest",
+            )
     else: # if data is on equal area projection (lat/lon are not dimensions) (CARRA)
         ds_climate.xoak.set_index(['latitude', 'longitude'], 'sklearn_geo_balltree')
         ds_selection = ds_climate.xoak.sel(
@@ -190,10 +202,14 @@ def _process_climate_data(ds_climate: xr.Dataset, df: pd.DataFrame, era5) -> pd.
     )
 
     # Drop columns
-    if era5: 
-        climate_df = climate_df.drop(columns=["points", "time"])
-    else:
-        climate_df = climate_df.drop(columns=["points", "valid_time", "time"])
+    try:
+        climate_df = climate_df.drop(columns=["points", "valid_time","time","expver","points","number"]) 
+    except: 
+        try: 
+            climate_df = climate_df.drop(columns=["points", "valid_time","time"]) 
+        except:
+            climate_df = climate_df.drop(columns=["points", "time"]) 
+
 
     # Get the number of rows and columns
     num_rows, num_cols = climate_df.shape

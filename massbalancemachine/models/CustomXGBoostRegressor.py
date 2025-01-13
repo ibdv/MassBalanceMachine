@@ -18,6 +18,7 @@ import config
 import numpy as np
 import pandas as pd
 import cupy as cp
+from sklearn.metrics import r2_score
 
 from xgboost import XGBRegressor
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
@@ -167,6 +168,7 @@ class CustomXGBoostRegressor(XGBRegressor):
 
         # Call the fit function from the XGBoost library with the custom
         # objective function
+        #super().fit(features, y, **fit_params,eval_set=[(features,y)],verbose=False)
         super().fit(features, y, **fit_params)
 
         return self
@@ -201,8 +203,9 @@ class CustomXGBoostRegressor(XGBRegressor):
 
         # Calculate MSE
         mse = ((y_pred_agg - y_true_mean) ** 2).mean()
+        r2 = r2_score(y_true_mean, y_pred_agg)
 
-        return -mse  # Return negative because GridSearchCV maximizes score
+        return r2#-mse  # Return negative because GridSearchCV maximizes score
 
     def predict(self, features: pd.DataFrame) -> np.ndarray:
         """
